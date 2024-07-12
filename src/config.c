@@ -157,6 +157,42 @@ out:
 	return ret;
 }
 
+// TODO fix these hacks and make them verify each parameter
+// hsm = {/path/to/file} {slotID} {PIN}
+// hsm = /usr/lib/pkcs11/opensc-pkcs11.so, 0, 123456
+// optionally, omit the pin
+static bool parse_hsmline(char hsm_path[HSM_PATH_LEN], uint8_t slot, char pin[HSM_PIN_LEN], const char *value)
+{
+ 	char * val;
+	int llen = HSM_PATH_LEN + sizeof(slot) + HSM_PIN_LEN;
+	char hsmcfg_line[llen]; 
+	 
+	strncpy((char *)hsmcfg_line, value, llen-1);
+
+  	val = strtok (hsmcfg_line,",");	
+	if (val != NULL) {
+		strncpy((char*)hsm_path, val, HSM_PATH_LEN-1);
+	} else {
+		return false;
+	}
+
+	val = strtok (NULL, ",");
+	if (val != NULL) {
+		slot = atoi(val);
+	} else {
+		return false;
+	}
+	val = strtok (NULL, ",");
+	if (val != NULL) {
+		strncpy(pin, val, HSM_PIN_LEN-1);
+	} else {
+		// user didn't include pin, ask for it
+		*pin = 'A';
+	}
+	
+	return true;
+}
+
 static inline bool parse_ip(struct wgallowedip *allowedip, const char *value)
 {
 	allowedip->family = AF_UNSPEC;
@@ -450,6 +486,13 @@ static bool process_line(struct config_ctx *ctx, const char *line)
 			ret = parse_key(ctx->device->private_key, value);
 			if (ret)
 				ctx->device->flags |= WGDEVICE_HAS_PRIVATE_KEY;
+		}
+		else if (key_match("hsm")) {
+			printf("Doing hsm!\n");
+			ret = parse_hsmline(ctx->device->hsm_path, ctx->device->slot, ctx->device->pin, value);
+			if (ret) {
+				ctx->device->flags |= WGDEVICE_HAS_HSM;
+			}
 		} else
 			goto error;
 	} else if (ctx->is_peer_section) {
@@ -586,6 +629,12 @@ struct wgdevice *config_read_cmd(const char *argv[], int argc)
 			if (!parse_keyfile(device->private_key, argv[1]))
 				goto error;
 			device->flags |= WGDEVICE_HAS_PRIVATE_KEY;
+			argv += 2;
+			argc -= 2;
+		} else if (!strcmp(argv[0], "hsm") && argc >= 2 && !peer) {
+			if (!parse_hsmline(device->hsm_path, device->slot, device->pin, argv[1]))
+				goto error;
+			device->flags |= WGDEVICE_HAS_HSM;
 			argv += 2;
 			argc -= 2;
 		} else if (!strcmp(argv[0], "peer") && argc >= 2) {
